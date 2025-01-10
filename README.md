@@ -10,4 +10,4 @@ add your webhook
 put "Fish Player Tracker Lib.dll" in "plugins"
 open game
 open "Fish Player Tracker.exe"
-[you can close you game]
+you can close you game
