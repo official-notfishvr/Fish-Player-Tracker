@@ -11,6 +11,6 @@ a player tracker made in C#
 Answer: \
 add your webhook to the code \
 put "Fish Player Tracker Lib.dll" in "plugins" \
-open game your game \
+open your game \
 open "Fish Player Tracker.exe" \
 you can close you game 
