@@ -4,15 +4,13 @@ Fish Player Tracker is a player tracker for gorilla tag
 
 a player tracker made in C#
 
+## FAQ
 
-How to use:
+#### How do i use?
 
-add your webhook
-
+Answer:
+add your webhook to the codde
 put "Fish Player Tracker Lib.dll" in "plugins"
-
-open game
-
+open game your game
 open "Fish Player Tracker.exe"
-
 you can close you game
