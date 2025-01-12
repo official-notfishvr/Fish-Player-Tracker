@@ -9,7 +9,7 @@ a player tracker made in C#
 #### How do i use?
 
 Answer: \
-add your webhook to the codde \
+add your webhook to the code \
 put "Fish Player Tracker Lib.dll" in "plugins" \
 open game your game \
 open "Fish Player Tracker.exe" \
