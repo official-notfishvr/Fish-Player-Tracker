@@ -50,7 +50,7 @@ namespace Fish_Player_Tracker
                 string loginRequestJson = JsonSerializer.Serialize(loginRequest);
                 var content = new StringContent(loginRequestJson, Encoding.UTF8, "application/json");
 
-                await LoginWithSteam(loginRequestJson);
+                //await LoginWithSteam(loginRequestJson);
 
                 cooldownTimer = new Timer(100);
                 cooldownTimer.Elapsed += async (sender, e) => await OnCooldownElapsed();
@@ -64,7 +64,7 @@ namespace Fish_Player_Tracker
             }
             catch (Exception ex)
             {
-                File.WriteAllText(@"C:\Users\notfishvr\source\repos\Fish Player Tracker\error.txt", ex.ToString());
+                File.WriteAllText(@"C:\Users\error.txt", ex.ToString());
             }
         }
         private static void LoadRoomCodes()
@@ -109,7 +109,25 @@ namespace Fish_Player_Tracker
         private static async Task GetSharedGroupData(string groupType)
         {
             string getSharedGroupDataEndpoint = $"https://{playFabApiHost}/Client/GetSharedGroupData";
-            string room = (groupType == "prv") ? Settings.roomsPrv[Settings.index] : Settings.roomsPub[Settings.index2];
+            string room;
+            if (groupType == "prv")
+            {
+                if (Settings.index >= Settings.roomsPrv.Count)
+                {
+                    Console.WriteLine("Index out of range for prv rooms. Resetting index.");
+                    Settings.index = 0;
+                }
+                room = Settings.roomsPrv[Settings.index];
+            }
+            else
+            {
+                if (Settings.index2 >= Settings.roomsPub.Count)
+                {
+                    Console.WriteLine("Index out of range for pub rooms. Resetting index.");
+                    Settings.index2 = 0;
+                }
+                room = Settings.roomsPub[Settings.index2];
+            }
             string region = Settings.regions[random.Next(0, Settings.regions.Length)];
             string combinedCode = room + region;
 
@@ -129,16 +147,16 @@ namespace Fish_Player_Tracker
             string responseContent = await response.Content.ReadAsStringAsync();
 
             string filePath = (groupType == "prv") ? "Data/GetSharedGroupData.txt" : "Data/GetSharedGroupData2.txt";
-            using (StreamWriter outputFile = new StreamWriter(filePath))
+            //using (StreamWriter outputFile = new StreamWriter(filePath))
             {
                 if (response.StatusCode != System.Net.HttpStatusCode.OK)
                 {
-                    outputFile.WriteLine($"Failed {response.StatusCode}");
-                    outputFile.WriteLine(responseContent);
+                    //outputFile.WriteLine($"Failed {response.StatusCode}");
+                    //outputFile.WriteLine(responseContent);
                 }
 
                 var responseJson = JsonDocument.Parse(responseContent);
-                outputFile.WriteLine(JsonSerializer.Serialize(responseJson, new JsonSerializerOptions { WriteIndented = true }));
+               // outputFile.WriteLine(JsonSerializer.Serialize(responseJson, new JsonSerializerOptions { WriteIndented = true }));
 
                 if (responseJson.RootElement.TryGetProperty("data", out JsonElement dataElement))
                 {
@@ -146,7 +164,7 @@ namespace Fish_Player_Tracker
                     {
                         if (dataItems.GetRawText() == "{}")
                         {
-                            RemoveRoomFor10Minutes(room);
+                            RemoveRoom(room);
                         }
                         else
                         {
@@ -249,18 +267,18 @@ namespace Fish_Player_Tracker
                 await SendDiscordWebhook("Player Found - GT1 Badge", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/8/88/Gt1.png/revision/latest/thumbnail/width/360/height/360?cb=20220223233019", "free");
             }
         }
-        private static void RemoveRoomFor10Minutes(string room)
+        private static void RemoveRoom(string room)
         {
             Console.WriteLine($"Removing room: {room}");
             if (Settings.roomsPrv.Contains(room))
             {
                 Settings.roomsPrv.Remove(room);
-                removedRooms[room] = DateTime.UtcNow.AddMinutes(10);
+                removedRooms[room] = DateTime.UtcNow.AddMinutes(2);
             }
             if (Settings.roomsPub.Contains(room))
             {
                 Settings.roomsPub.Remove(room);
-                removedRooms[room] = DateTime.UtcNow.AddMinutes(10);
+                removedRooms[room] = DateTime.UtcNow.AddMinutes(2);
             }
         }
         private static async Task SendDiscordWebhook(string title, string room, int PlayerList, string region, string thumbnail, string thing)
