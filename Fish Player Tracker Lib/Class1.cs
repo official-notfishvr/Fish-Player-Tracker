@@ -40,7 +40,8 @@ namespace Fish_Player_Tracker_Lib
 
         public void Update()
         {
-            string steamAuthTicket = PlayFabAuthenticator.instance.GetSteamAuthTicket().ToString();
+            //string steamAuthTicket = PlayFabAuthenticator.instance.GetSteamAuthTicket().ToString();
+            //SteamAuthTicket steamAuthTicket = Traverse.Create(PlayFabAuthenticator.instance).Field("steamAuthTicketForPlayFab").GetValue();
             string sessionTicket = Traverse.Create(PlayFabAuthenticator.instance).Field("_sessionTicket").GetValue()?.ToString();
             string playFabId = Traverse.Create(PlayFabAuthenticator.instance).Field("_playFabId").GetValue()?.ToString();
             string playerEntity = Traverse.Create(GorillaNetworking.GorillaServer.Instance).Field("get_playerEntity").GetValue()?.ToString();
@@ -48,7 +49,7 @@ namespace Fish_Player_Tracker_Lib
             try
             {
                 if (!Directory.Exists(Path)) { Directory.CreateDirectory(Path); }
-                UpdateFileIfChanged(steamAuthTicketPath, steamAuthTicket);
+                //UpdateFileIfChanged(steamAuthTicketPath, steamAuthTicket);
                 UpdateFileIfChanged(sessionTicketPath, sessionTicket);
                 UpdateFileIfChanged(playFabIdPath, playFabId);
                 UpdateFileIfChanged(playerEntityPath, playerEntity);

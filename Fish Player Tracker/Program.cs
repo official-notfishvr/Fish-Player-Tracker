@@ -17,10 +17,9 @@ namespace Fish_Player_Tracker
         private static readonly HttpClient httpClient = new HttpClient();
         private static readonly Random random = new Random();
         public static string playFabTitleID = "63FDD";
-        public static string steamTicket = string.Empty, playFabId = string.Empty, sessionTicket = string.Empty;
+        public static string playFabId = string.Empty, sessionTicket = string.Empty;
         public static string playFabApiHost = $"{playFabTitleID}.playfabapi.com";
         public static string Path = @"C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag\Tracker";
-        public static string steamAuthTicketPath = $@"{Path}\SteamAuthTicket.txt";
         public static string sessionTicketPath = $@"{Path}\sessionTicket.txt";
         public static string playFabIdPath = $@"{Path}\playFabId.txt";
         public static string RoomCodesPrvPath = $@"{Path}\RoomCodesPrv.txt";
@@ -40,14 +39,13 @@ namespace Fish_Player_Tracker
             {
                 Console.Title = "Fish Player Tracker Prv ~ by notfishvr";
 
-                if (File.Exists(steamAuthTicketPath)) { steamTicket = File.ReadAllText(steamAuthTicketPath); }
                 if (File.Exists(sessionTicketPath)) { sessionTicket = File.ReadAllText(sessionTicketPath); }
                 if (File.Exists(playFabIdPath)) { playFabId = File.ReadAllText(playFabIdPath); }
-                if (File.Exists(RoomCodesPrvPath)) { Settings.roomsPrv = File.ReadAllText(RoomCodesPrvPath).Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList(); }
-                if (File.Exists(RoomCodesPubPath)) { Settings.roomsPub = File.ReadAllText(RoomCodesPubPath).Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList(); }
+                //if (File.Exists(RoomCodesPrvPath)) { Settings.roomsPrv = File.ReadAllText(RoomCodesPrvPath).Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList(); }
+                //if (File.Exists(RoomCodesPubPath)) { Settings.roomsPub = File.ReadAllText(RoomCodesPubPath).Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList(); }
+                LoadRoomCodes();
 
-
-                var loginRequest = new { TitleId = playFabTitleID, SteamTicket = steamTicket, InfoRequestParameters = new { GetUserAccountInfo = true } };
+                var loginRequest = new { TitleId = playFabTitleID, InfoRequestParameters = new { GetUserAccountInfo = true } };
 
                 string loginRequestJson = JsonSerializer.Serialize(loginRequest);
                 var content = new StringContent(loginRequestJson, Encoding.UTF8, "application/json");
@@ -74,26 +72,27 @@ namespace Fish_Player_Tracker
             if (File.Exists(RoomCodesPrvPath))
             {
                 Settings.roomsPrv = File.ReadAllText(RoomCodesPrvPath)
-                    .Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries)
-                    .Where(room => !removedRooms.ContainsKey(room))  // Skip removed rooms
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(room => room.Trim())
                     .ToList();
 
                 Settings.roomsPub = File.ReadAllText(RoomCodesPubPath)
-                    .Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries)
-                    .Where(room => !removedRooms.ContainsKey(room))  // Skip removed rooms
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(room => room.Trim())
                     .ToList();
+
             }
         }
         private static async Task OnCooldownElapsed()
         {
             if (DateTime.UtcNow >= nextRunTime)
             {
-                //GetSharedGroupDataPub();
+                //await GetSharedGroupData("pub"); // does not work
                 nextRunTime = DateTime.UtcNow.AddMilliseconds(310);
             }
             if (DateTime.UtcNow >= nextRunTime2)
             {
-                GetSharedGroupDataPrv();
+                await GetSharedGroupData("prv");
                 nextRunTime2 = DateTime.UtcNow.AddMilliseconds(450);
             }
 
@@ -107,17 +106,9 @@ namespace Fish_Player_Tracker
                 //Console.WriteLine($"Room {room} has been re-added after 10 minutes.");
             }
         }
-        private static async Task GetSharedGroupDataPrv()
-        {
-            await GetSharedGroupData("prv");
-        }
-        private static async Task GetSharedGroupDataPub()
-        {
-            await GetSharedGroupData("pub");
-        }
         private static async Task GetSharedGroupData(string groupType)
         {
-            string getAccountInfoEndpoint = $"https://{playFabApiHost}/Client/GetSharedGroupData";
+            string getSharedGroupDataEndpoint = $"https://{playFabApiHost}/Client/GetSharedGroupData";
             string room = (groupType == "prv") ? Settings.roomsPrv[Settings.index] : Settings.roomsPub[Settings.index2];
             string region = Settings.regions[random.Next(0, Settings.regions.Length)];
             string combinedCode = room + region;
@@ -128,7 +119,7 @@ namespace Fish_Player_Tracker
             };
 
             string requestJson = JsonSerializer.Serialize(requestPayload);
-            var requestMessage = new HttpRequestMessage(HttpMethod.Post, getAccountInfoEndpoint)
+            var requestMessage = new HttpRequestMessage(HttpMethod.Post, getSharedGroupDataEndpoint)
             {
                 Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
             };
@@ -144,10 +135,6 @@ namespace Fish_Player_Tracker
                 {
                     outputFile.WriteLine($"Failed {response.StatusCode}");
                     outputFile.WriteLine(responseContent);
-                }
-                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                {
-                    outputFile.WriteLine("Unauthorized");
                 }
 
                 var responseJson = JsonDocument.Parse(responseContent);
@@ -204,6 +191,7 @@ namespace Fish_Player_Tracker
                     }
                 }
             }
+
             if (groupType == "prv")
             {
                 Console.WriteLine(room);
@@ -228,6 +216,7 @@ namespace Fish_Player_Tracker
             {
                 index++;
             }
+            Console.WriteLine($"Cycling to room {index}, Total rooms: {roomListCount}");
         }
         private static async Task CheckAndSendWebhook(string value, string room, int playerList, string region)
         {
@@ -262,17 +251,16 @@ namespace Fish_Player_Tracker
         }
         private static void RemoveRoomFor10Minutes(string room)
         {
+            Console.WriteLine($"Removing room: {room}");
             if (Settings.roomsPrv.Contains(room))
             {
                 Settings.roomsPrv.Remove(room);
                 removedRooms[room] = DateTime.UtcNow.AddMinutes(10);
-                //Console.WriteLine($"Room {room} removed and will be re-added in 10 minutes.");
             }
             if (Settings.roomsPub.Contains(room))
             {
                 Settings.roomsPub.Remove(room);
                 removedRooms[room] = DateTime.UtcNow.AddMinutes(10);
-                //Console.WriteLine($"Room {room} removed and will be re-added in 10 minutes.");
             }
         }
         private static async Task SendDiscordWebhook(string title, string room, int PlayerList, string region, string thumbnail, string thing)
@@ -334,123 +322,5 @@ namespace Fish_Player_Tracker
                 Console.WriteLine($"Here's some debug information:\n{errorContent}");
             }
         }
-        #region Code
-        private static async Task GetAccountInfo()
-        {
-            string getAccountInfoEndpoint = $"https://{playFabApiHost}/Client/GetAccountInfo";
-            var requestContent = new
-            {
-                PlayFabId = playFabId
-            };
-            var requestMessage = new HttpRequestMessage(HttpMethod.Post, getAccountInfoEndpoint)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(requestContent), Encoding.UTF8, "application/json")
-            };
-            requestMessage.Headers.Add("X-PlayFabSDK", "PlayFabSDK/2.94.210118");
-            requestMessage.Headers.Add("X-Authorization", sessionTicket);
-
-            HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
-            string responseContent = await response.Content.ReadAsStringAsync();
-
-            using (StreamWriter outputFile = new StreamWriter("Data/AccountInfo.txt"))
-            {
-                if (response.StatusCode != System.Net.HttpStatusCode.OK)
-                {
-                    outputFile.WriteLine($"Failed {response.StatusCode}");
-                    outputFile.WriteLine(responseContent);
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                {
-                    outputFile.WriteLine("Unauthorized");
-                }
-                else
-                {
-                    var responseJson = JsonDocument.Parse(responseContent);
-                    var data = responseJson.RootElement.GetProperty("data");
-
-                    var accountInfo = data.GetProperty("AccountInfo");
-
-                    var creationDate = accountInfo.TryGetProperty("Created", out var createdProp) ? createdProp.GetString() : "N/A";
-                    var lastLoginDate = accountInfo.TryGetProperty("LastLogin", out var lastLoginProp) ? lastLoginProp.GetString() : "N/A";
-                    var playerId = accountInfo.TryGetProperty("PlayFabId", out var playerIdProp) ? playerIdProp.GetString() : "N/A";
-                    var isBanned = accountInfo.TryGetProperty("BannedUntil", out var bannedUntilProp) && bannedUntilProp.ValueKind != JsonValueKind.Null;
-
-                    outputFile.WriteLine($"CreationDate: {creationDate}");
-                    outputFile.WriteLine($"LastLoginDate: {lastLoginDate}");
-                    outputFile.WriteLine($"PlayerId: {playerId}");
-                    outputFile.WriteLine($"IsBanned: {isBanned}");
-                }
-            }
-        }
-        private static async Task GetInventory()
-        {
-            string getAccountInfoEndpoint = $"https://{playFabApiHost}/Client/GetUserInventory";
-            var requestContent = new
-            {
-                PlayFabId = "A6FFC7318E1301AF"
-            };
-            var requestMessage = new HttpRequestMessage(HttpMethod.Post, getAccountInfoEndpoint)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(requestContent), Encoding.UTF8, "application/json")
-            };
-            //requestMessage.Headers.Add("X-PlayFabSDK", "PlayFabSDK/2.94.210118");
-            requestMessage.Headers.Add("X-Authorization", sessionTicket);
-
-            HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
-            string responseContent = await response.Content.ReadAsStringAsync();
-
-            using (StreamWriter outputFile = new StreamWriter("Data/Inventory-A6FFC7318E1301AF.txt"))
-            {
-                if (response.StatusCode != System.Net.HttpStatusCode.OK)
-                {
-                    outputFile.WriteLine($"Failed {response.StatusCode}");
-                    outputFile.WriteLine(responseContent);
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                {
-                    outputFile.WriteLine("Unauthorized");
-                }
-                else
-                {
-                    var responseJson = JsonDocument.Parse(responseContent);
-                    var data = responseJson.RootElement.GetProperty("data");
-                    outputFile.Write(data);
-
-                }
-            }
-        }
-        private static async Task GetCatalogItems()
-        {
-            string getAccountInfoEndpoint = $"https://{playFabApiHost}/Client/GetCatalogItems";
-            var requestContent = new
-            {
-                PlayFabId = playFabId
-            };
-            var requestMessage = new HttpRequestMessage(HttpMethod.Post, getAccountInfoEndpoint)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(requestContent), Encoding.UTF8, "application/json")
-            };
-            requestMessage.Headers.Add("X-PlayFabSDK", "PlayFabSDK/2.94.210118");
-            requestMessage.Headers.Add("X-Authorization", sessionTicket);
-
-            HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
-            string responseContent = await response.Content.ReadAsStringAsync();
-
-            using (StreamWriter outputFile = new StreamWriter("Data/CatalogItems.txt"))
-            {
-                if (response.StatusCode != System.Net.HttpStatusCode.OK)
-                {
-                    outputFile.WriteLine($"Failed {response.StatusCode}");
-                    outputFile.WriteLine(responseContent);
-                }
-                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                {
-                    outputFile.WriteLine("Unauthorized");
-                }
-                var responseJson = JsonDocument.Parse(responseContent);
-                outputFile.WriteLine(JsonSerializer.Serialize(responseJson, new JsonSerializerOptions { WriteIndented = true }));
-            }
-        }
-        #endregion
     }
 }
