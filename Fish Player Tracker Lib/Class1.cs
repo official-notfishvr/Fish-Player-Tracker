@@ -172,7 +172,7 @@ namespace Fish_Player_Tracker_Lib
         private static async Task SendDiscordWebhook(string UserName, string UserID, Photon.Realtime.Player player)
         {
             string webhookUrl = "";
-            webhookUrl = "";
+            webhookUrl = Settings.WebHook;
             string time = DateTime.Now.ToString("h:mm tt") + " Central Time";
             var payload = new
             {

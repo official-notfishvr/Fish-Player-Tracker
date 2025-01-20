@@ -8,6 +8,7 @@ namespace Fish_Player_Tracker_Lib
 {
     internal class Settings
     {
+        public static string WebHook = "";
         public static bool hasAddedCity = false;
         public static float hopCooldown = 0f;
         public static List<string> DontRemoveCodes = new List<string>

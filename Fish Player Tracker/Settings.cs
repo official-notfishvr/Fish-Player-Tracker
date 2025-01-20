@@ -8,6 +8,8 @@ namespace Fish_Player_Tracker
 {
     public class Settings
     {
+        public static string WebHookFree = "";
+        public static string WebHookPro = "";
         public static int index = 0;
         public static int index2 = 0;
         public static float cooldown = 0f;

@@ -52,7 +52,7 @@ namespace Fish_Player_Tracker
 
                 //await LoginWithSteam(loginRequestJson);
 
-                cooldownTimer = new Timer(100);
+                cooldownTimer = new Timer(235);
                 cooldownTimer.Elapsed += async (sender, e) => await OnCooldownElapsed();
                 cooldownTimer.Start();
 
@@ -287,8 +287,8 @@ namespace Fish_Player_Tracker
 
             string webhookUrl = "";
             string content = "";
-            if (thing == "free") { webhookUrl = ""; }
-            if (thing == "pro") { webhookUrl = ""; }
+            if (thing == "free") { webhookUrl = Settings.WebHookFree; }
+            if (thing == "pro") { webhookUrl = Settings.WebHookPro; }
             if (title == "Player Found - Finger Painter Badge") { content = "||<@&1265507746535575623>||"; }
             if (title == "Player Found - Illustrator Badge") { content = "||<@&1266147098513113168>||"; }
             if (title == "Player Found - Administrator Badge") { content = "||<@&1265511219872137321>||"; }
