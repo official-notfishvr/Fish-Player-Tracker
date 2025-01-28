@@ -18,4 +18,4 @@ you can close you game
 
 #### Why is it not working
 
-Answer: if it is not working download (BepInEx.cfg)[https://github.com/official-notfishvr/Fish-Player-Tracker/raw/refs/heads/main/BepInEx.cfg] and put it in \BepInEx\config
+Answer: if it is not working download [BepInEx.cfg](https://github.com/official-notfishvr/Fish-Player-Tracker/raw/refs/heads/main/BepInEx.cfg) and put it in \BepInEx\config
