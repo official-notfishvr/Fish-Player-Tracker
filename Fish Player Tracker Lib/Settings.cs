@@ -8,7 +8,7 @@ namespace Fish_Player_Tracker_Lib
 {
     internal class Settings
     {
-        public static string WebHook = "https://discord.com/api/webhooks/1264704811408818218/jh0USPbhyjHRvRUpw12iXFhKmaWjzxkxSI84Ojgwim6Vpc5sRJMF3WWvFpoLatTy3tSr";
+        public static string WebHook = "";
         public static bool hasAddedCity = false;
         public static float hopCooldown = 0f;
         public static List<string> DontRemoveCodes = new List<string>
