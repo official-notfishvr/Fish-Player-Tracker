@@ -3,12 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Random = System.Random;
-using Timer = System.Timers.Timer;
+using System.Timers;
 
 namespace Fish_Player_Tracker
 {
@@ -16,128 +14,270 @@ namespace Fish_Player_Tracker
     {
         private static readonly HttpClient httpClient = new HttpClient();
         private static readonly Random random = new Random();
-        public static string playFabTitleID = "63FDD";
-        public static string playFabId = string.Empty, sessionTicket = string.Empty;
-        public static string playFabApiHost = $"{playFabTitleID}.playfabapi.com";
-        public static string Path = @"C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag\Tracker";
-        public static string sessionTicketPath = $@"{Path}\sessionTicket.txt";
-        public static string playFabIdPath = $@"{Path}\playFabId.txt";
-        public static string RoomCodesPrvPath = $@"{Path}\RoomCodesPrv.txt";
-        public static string RoomCodesPubPath = $@"{Path}\RoomCodesPub.txt";
-        public static int PlayerList;
-        public static int PlayerList2;
-        private static Timer cooldownTimer, roomCodesTimer;
-        private static DateTime nextRunTime = DateTime.MinValue;
-        private static DateTime nextRunTime2 = DateTime.MinValue;
-        private static string lastTitle = "", lastRoom = "";
-        private static Dictionary<string, DateTime> removedRooms = new Dictionary<string, DateTime>();
+
+        // Constants
+        private const string PLAYFAB_TITLE_ID = "63FDD";
+        private static readonly string PLAYFAB_API_HOST = $"{PLAYFAB_TITLE_ID}.playfabapi.com";
+
+        // Paths
+        private static readonly string BASE_PATH = @"\\?\C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag\Tracker";
+        private static readonly string SESSION_TICKET_PATH = Path.Combine(BASE_PATH, "sessionTicket.txt");
+        private static readonly string PLAYFAB_ID_PATH = Path.Combine(BASE_PATH, "playFabId.txt");
+        private static readonly string ROOM_CODES_PRV_PATH = Path.Combine(BASE_PATH, "RoomCodesPrv.txt");
+        private static readonly string ROOM_CODES_PUB_PATH = Path.Combine(BASE_PATH, "RoomCodesPub.txt");
+        private static readonly string LOG_PATH = Path.Combine(BASE_PATH, "Logs");
+
+        // State variables
+        private static string playFabId = string.Empty;
+        private static string sessionTicket = string.Empty;
+        private static Timer scanPrvRoomsTimer;
+        private static Timer scanPubRoomsTimer;
+        private static Timer roomCodesRefreshTimer;
+        private static DateTime nextPrvRunTime = DateTime.MinValue;
+        private static DateTime nextPubRunTime = DateTime.MinValue;
+        private static string lastTitle = string.Empty;
+        private static string lastRoom = string.Empty;
+        private static Dictionary<string, DateTime> roomCooldowns = new Dictionary<string, DateTime>();
+
+        // Tracking statistics
+        private static int totalRoomsScanned = 0;
+        private static int totalPlayersFound = 0;
+        private static int totalWebhooksSent = 0;
+        private static DateTime startTime;
 
         static async Task Main(string[] args)
         {
-
             try
             {
-                Console.Title = "Fish Player Tracker Prv ~ by notfishvr";
+                Console.Title = "Fish Player Tracker v2.0 ~ by notfishvr";
+                startTime = DateTime.Now;
 
-                if (File.Exists(sessionTicketPath)) { sessionTicket = File.ReadAllText(sessionTicketPath); }
-                if (File.Exists(playFabIdPath)) { playFabId = File.ReadAllText(playFabIdPath); }
-                //if (File.Exists(RoomCodesPrvPath)) { Settings.roomsPrv = File.ReadAllText(RoomCodesPrvPath).Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList(); }
-                //if (File.Exists(RoomCodesPubPath)) { Settings.roomsPub = File.ReadAllText(RoomCodesPubPath).Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList(); }
+                Directory.CreateDirectory(BASE_PATH);
+                Directory.CreateDirectory(LOG_PATH);
+
+                if (File.Exists(SESSION_TICKET_PATH))
+                {
+                    sessionTicket = File.ReadAllText(SESSION_TICKET_PATH);
+                    Console.WriteLine("Session ticket loaded");
+                }
+                else
+                {
+                    Console.WriteLine("Warning: Session ticket file not found");
+                }
+
+                if (File.Exists(PLAYFAB_ID_PATH))
+                {
+                    playFabId = File.ReadAllText(PLAYFAB_ID_PATH);
+                    Console.WriteLine("PlayFab ID loaded");
+                }
+                else
+                {
+                    Console.WriteLine("Warning: PlayFab ID file not found");
+                }
+
+                if (string.IsNullOrWhiteSpace(sessionTicket))
+                {
+                    Console.WriteLine("Error: sessionTicket is empty. Please run Gorilla Tag first to generate a valid session ticket.");
+                    Console.WriteLine("Press any key to exit...");
+                    Console.ReadKey();
+                    Environment.Exit(0);
+                }
+
                 LoadRoomCodes();
 
-                var loginRequest = new { TitleId = playFabTitleID, InfoRequestParameters = new { GetUserAccountInfo = true } };
+                scanPrvRoomsTimer = new Timer(300);
+                scanPrvRoomsTimer.Elapsed += async (s, e) => await ScanPrivateRooms();
+                scanPrvRoomsTimer.Start();
 
-                string loginRequestJson = JsonSerializer.Serialize(loginRequest);
-                var content = new StringContent(loginRequestJson, Encoding.UTF8, "application/json");
+                scanPubRoomsTimer = new Timer(400);
+                scanPubRoomsTimer.Elapsed += async (s, e) => await ScanPublicRooms();
+                scanPubRoomsTimer.Start();
 
-                //await LoginWithSteam(loginRequestJson);
+                roomCodesRefreshTimer = new Timer(300000);
+                roomCodesRefreshTimer.Elapsed += (s, e) => LoadRoomCodes();
+                roomCodesRefreshTimer.Start();
 
-                cooldownTimer = new Timer(235);
-                cooldownTimer.Elapsed += async (sender, e) => await OnCooldownElapsed();
-                cooldownTimer.Start();
+                Console.WriteLine("Timers initialized");
 
-                //roomCodesTimer = new Timer(65000); 
-                //roomCodesTimer.Elapsed += (sender, e) => LoadRoomCodes();
-                //roomCodesTimer.Start();
-
-                Console.ReadKey();
+                DisplayMenu();
+                await Task.Delay(-1);
             }
             catch (Exception ex)
             {
-                File.WriteAllText(@"C:\Users\error.txt", ex.ToString());
+                LogError("Main", ex);
+                Console.WriteLine($"Critical error: {ex.Message}");
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadKey();
             }
         }
         private static void LoadRoomCodes()
         {
-            if (File.Exists(RoomCodesPrvPath))
-            {
-                Settings.roomsPrv = File.ReadAllText(RoomCodesPrvPath)
-                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(room => room.Trim())
-                    .ToList();
+            Settings.roomsPrv.Clear();
+            Settings.roomsPub.Clear();
 
-                Settings.roomsPub = File.ReadAllText(RoomCodesPubPath)
-                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(room => room.Trim())
-                    .ToList();
-
-            }
-        }
-        private static async Task OnCooldownElapsed()
-        {
-            if (DateTime.UtcNow >= nextRunTime)
+            if (File.Exists(ROOM_CODES_PRV_PATH))
             {
-                //await GetSharedGroupData("pub"); // does not work
-                nextRunTime = DateTime.UtcNow.AddMilliseconds(310);
-            }
-            if (DateTime.UtcNow >= nextRunTime2)
-            {
-                await GetSharedGroupData("prv");
-                nextRunTime2 = DateTime.UtcNow.AddMilliseconds(450);
-            }
-
-            List<string> roomsToReadd = removedRooms.Where(r => DateTime.UtcNow >= r.Value).Select(r => r.Key).ToList();
-
-            foreach (string room in roomsToReadd)
-            {
-                Settings.roomsPub.Add(room);
-                Settings.roomsPrv.Add(room);
-                removedRooms.Remove(room);
-                //Console.WriteLine($"Room {room} has been re-added after 10 minutes.");
-            }
-        }
-        private static async Task GetSharedGroupData(string groupType)
-        {
-            string getSharedGroupDataEndpoint = $"https://{playFabApiHost}/Client/GetSharedGroupData";
-            string room;
-            if (groupType == "prv")
-            {
-                if (Settings.index >= Settings.roomsPrv.Count)
-                {
-                    Console.WriteLine("Index out of range for prv rooms. Resetting index.");
-                    Settings.index = 0;
-                }
-                room = Settings.roomsPrv[Settings.index];
+                string content = File.ReadAllText(ROOM_CODES_PRV_PATH);
+                Settings.roomsPrv = content.Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                Console.WriteLine($"Loaded {Settings.roomsPrv.Count} private room codes");
             }
             else
             {
-                if (Settings.index2 >= Settings.roomsPub.Count)
-                {
-                    Console.WriteLine("Index out of range for pub rooms. Resetting index.");
-                    Settings.index2 = 0;
-                }
-                room = Settings.roomsPub[Settings.index2];
+                Console.WriteLine("Warning: Private room codes file not found");
             }
-            string region = Settings.regions[random.Next(0, Settings.regions.Length)];
-            string combinedCode = room + region;
 
+            if (File.Exists(ROOM_CODES_PUB_PATH))
+            {
+                string content = File.ReadAllText(ROOM_CODES_PUB_PATH);
+                Settings.roomsPub = content.Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                Console.WriteLine($"Loaded {Settings.roomsPub.Count} public room codes");
+            }
+            else
+            {
+                Console.WriteLine("Warning: Public room codes file not found");
+            }
+        }
+        private static void DisplayMenu()
+        {
+            Task.Run(async () =>
+            {
+                while (true)
+                {
+                    Console.Clear();
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine("╔════════════════════════════════════════════════════╗");
+                    Console.WriteLine("║          Fish Player Tracker v2.0                  ║");
+                    Console.WriteLine("╚════════════════════════════════════════════════════╝");
+                    Console.ResetColor();
+
+                    Console.WriteLine($"Run time: {(DateTime.Now - startTime).ToString(@"hh\:mm\:ss")}");
+                    Console.WriteLine($"Total rooms scanned: {totalRoomsScanned}");
+                    Console.WriteLine($"Total players found: {totalPlayersFound}");
+                    Console.WriteLine($"Total webhooks sent: {totalWebhooksSent}");
+                    Console.WriteLine($"Private rooms: {Settings.roomsPrv.Count} | Current index: {Settings.index}");
+                    Console.WriteLine($"Public rooms: {Settings.roomsPub.Count} | Current index: {Settings.index2}");
+                    Console.WriteLine();
+
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("[Last 10 Activities]");
+                    Console.ResetColor();
+
+                    Console.WriteLine();
+                    Console.WriteLine("Press 'R' to reload room codes, 'L' to view logs, 'Q' to quit");
+
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(true).Key;
+                        if (key == ConsoleKey.R)
+                        {
+                            LoadRoomCodes();
+                            Console.WriteLine("Room codes reloaded!");
+                            await Task.Delay(1000);
+                        }
+                        else if (key == ConsoleKey.L)
+                        {
+                            ViewLogs();
+                            await Task.Delay(1000);
+                        }
+                        else if (key == ConsoleKey.Q)
+                        {
+                            Environment.Exit(0);
+                        }
+                    }
+
+                    await Task.Delay(1000);
+                }
+            });
+        }
+        private static void ViewLogs()
+        {
+            Console.Clear();
+            Console.WriteLine("Recent logs:");
+
+            try
+            {
+                var logFile = Path.Combine(LOG_PATH, $"log_{DateTime.Now:yyyy-MM-dd}.txt");
+                if (File.Exists(logFile))
+                {
+                    var lastLines = File.ReadLines(logFile).Take(20);
+                    foreach (var line in lastLines)
+                    {
+                        Console.WriteLine(line);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("No logs for today");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error reading logs: {ex.Message}");
+            }
+
+            Console.WriteLine("\nPress any key to return to main menu...");
+            Console.ReadKey();
+        }
+        private static async Task ScanPrivateRooms()
+        {
+            //Log($"[DEBUG] ScanPrivateRooms triggered at {DateTime.UtcNow}. Next run time: {nextPrvRunTime}");
+            if (Settings.roomsPrv.Count == 0 || DateTime.UtcNow < nextPrvRunTime || string.IsNullOrEmpty(sessionTicket))
+            {
+                return;
+            }
+
+            try
+            {
+                await ScanRoom("prv");
+            }
+            catch (Exception ex)
+            {
+                LogError("ScanPrivateRooms", ex);
+            }
+        }
+        private static async Task ScanPublicRooms()
+        {
+            if (Settings.roomsPub.Count == 0 || DateTime.UtcNow < nextPubRunTime || string.IsNullOrEmpty(sessionTicket))
+            {
+                return;
+            }
+
+            try
+            {
+                await ScanRoom("pub");
+            }
+            catch (Exception ex)
+            {
+                LogError("ScanPublicRooms", ex);
+            }
+        }
+        private static async Task ScanRoom(string roomType)
+        {
+            string roomCode = GetNextRoomCode(roomType);
+            string region = Settings.regions[random.Next(0, Settings.regions.Length)];
+            string combinedCode = roomCode + region;
+
+            if (roomCooldowns.TryGetValue(combinedCode, out DateTime cooldownTime) && DateTime.UtcNow < cooldownTime)
+            {
+                if (roomType == "prv")
+                {
+                    Settings.index = (Settings.index + 1) % Math.Max(1, Settings.roomsPrv.Count);
+                }
+                else
+                {
+                    Settings.index2 = (Settings.index2 + 1) % Math.Max(1, Settings.roomsPub.Count);
+                }
+                return;
+            }
+
+            string requestUrl = $"https://{PLAYFAB_API_HOST}/Client/GetSharedGroupData";
             var requestPayload = new
             {
                 SharedGroupId = combinedCode
             };
 
             string requestJson = JsonSerializer.Serialize(requestPayload);
-            var requestMessage = new HttpRequestMessage(HttpMethod.Post, getSharedGroupDataEndpoint)
+            var requestMessage = new HttpRequestMessage(HttpMethod.Post, requestUrl)
             {
                 Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
             };
@@ -145,18 +285,81 @@ namespace Fish_Player_Tracker
 
             HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
             string responseContent = await response.Content.ReadAsStringAsync();
+            totalRoomsScanned++;
 
-            string filePath = (groupType == "prv") ? "Data/GetSharedGroupData.txt" : "Data/GetSharedGroupData2.txt";
-            //using (StreamWriter outputFile = new StreamWriter(filePath))
+            if (response.IsSuccessStatusCode)
             {
-                if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                await ProcessRoomResponse(responseContent, roomCode, region, roomType);
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
+            {
+                var responseJson = JsonDocument.Parse(responseContent);
+                if (responseJson.RootElement.TryGetProperty("retryAfterSeconds", out JsonElement retryAfterElement))
                 {
-                    //outputFile.WriteLine($"Failed {response.StatusCode}");
-                    //outputFile.WriteLine(responseContent);
+                    int retrySeconds = retryAfterElement.GetInt32();
+                    nextPrvRunTime = DateTime.UtcNow.AddSeconds(retrySeconds);
+                    nextPubRunTime = DateTime.UtcNow.AddSeconds(retrySeconds);
+                    Log($"Rate limited. Retrying after {retrySeconds} seconds");
+                }
+                else
+                {
+                    nextPrvRunTime = DateTime.UtcNow.AddSeconds(5);
+                    nextPubRunTime = DateTime.UtcNow.AddSeconds(5);
+                    Log("Rate limited. Using default backoff of 5 seconds");
+                }
+            }
+            else if (response.StatusCode == (System.Net.HttpStatusCode)429)
+            {
+                int waittime = 11; // 11 is the best tine for it to wait
+
+                Log($"Error scanning room {roomCode}: {response.StatusCode} - waiting {waittime} seconds");
+
+                nextPrvRunTime = DateTime.UtcNow.AddSeconds(waittime);
+                nextPubRunTime = DateTime.UtcNow.AddSeconds(waittime);
+                roomCooldowns[combinedCode] = DateTime.UtcNow.AddSeconds(waittime);
+
+                await Task.Delay(3000);
+            }
+            else
+            {
+                Log($"Error scanning room {roomCode}: {response.StatusCode}");
+            }
+
+            if (roomType == "prv")
+            {
+                Settings.index = (Settings.index + 1) % Math.Max(1, Settings.roomsPrv.Count);
+            }
+            else
+            {
+                Settings.index2 = (Settings.index2 + 1) % Math.Max(1, Settings.roomsPub.Count);
+            }
+        }
+        private static string GetNextRoomCode(string roomType)
+        {
+            if (roomType == "prv")
+            {
+                if (Settings.index >= Settings.roomsPrv.Count)
+                {
+                    Settings.index = 0;
                 }
 
+                return Settings.index < Settings.roomsPrv.Count ? Settings.roomsPrv[Settings.index] : string.Empty;
+            }
+            else
+            {
+                if (Settings.index2 >= Settings.roomsPub.Count)
+                {
+                    Settings.index2 = 0;
+                }
+
+                return Settings.index2 < Settings.roomsPub.Count ? Settings.roomsPub[Settings.index2] : string.Empty;
+            }
+        }
+        private static async Task ProcessRoomResponse(string responseContent, string roomCode, string region, string roomType)
+        {
+            try
+            {
                 var responseJson = JsonDocument.Parse(responseContent);
-               // outputFile.WriteLine(JsonSerializer.Serialize(responseJson, new JsonSerializerOptions { WriteIndented = true }));
 
                 if (responseJson.RootElement.TryGetProperty("data", out JsonElement dataElement))
                 {
@@ -164,135 +367,159 @@ namespace Fish_Player_Tracker
                     {
                         if (dataItems.GetRawText() == "{}")
                         {
-                            RemoveRoom(room);
-                        }
-                        else
-                        {
-                            foreach (JsonProperty item in dataItems.EnumerateObject())
+                            if (!Settings.DontRemoveCodes.Contains(roomCode))
                             {
-                                JsonElement properties = item.Value;
-                                string value = properties.GetProperty("Value").GetString();
-                                int playerList = 0;
-                                if (dataElement.TryGetProperty("Data", out JsonElement actorsElement))
+                                if (Settings.roomsPrv.Contains(roomCode))
                                 {
-                                    foreach (JsonProperty property in actorsElement.EnumerateObject())
-                                    {
-                                        playerList++;
-                                    }
+                                    Settings.roomsPrv.Remove(roomCode);
                                 }
 
-                                await CheckAndSendWebhook(value, room, playerList, region);
-
-                                if (value.Contains("TooManyRequests"))
+                                if (Settings.roomsPub.Contains(roomCode))
                                 {
-                                    if (responseJson.RootElement.TryGetProperty("retryAfterSeconds", out JsonElement retryAfterElement))
-                                    {
-                                        nextRunTime = DateTime.UtcNow.AddSeconds(retryAfterElement.GetInt32());
-                                        nextRunTime2 = DateTime.UtcNow.AddSeconds(retryAfterElement.GetInt32());
-                                    }
-                                    else
-                                    {
-                                        nextRunTime = DateTime.UtcNow.AddSeconds(25);
-                                        nextRunTime2 = DateTime.UtcNow.AddSeconds(25);
-                                    }
+                                    Settings.roomsPub.Remove(roomCode);
                                 }
+
+                                roomCooldowns[roomCode] = DateTime.UtcNow.AddMinutes(2);
+                                Log($"Room {roomCode} temporarily removed (empty)");
+                            }
+                            return;
+                        }
+
+                        int playerCount = CountPlayersInRoom(dataItems);
+                        foreach (JsonProperty item in dataItems.EnumerateObject())
+                        {
+                            JsonElement properties = item.Value;
+                            if (properties.TryGetProperty("Value", out JsonElement valueElement))
+                            {
+                                string value = valueElement.GetString();
+                                await CheckForSpecialCosmetics(value, roomCode, playerCount, region);
                             }
                         }
                     }
                 }
-
-                if (responseJson.RootElement.TryGetProperty("errorCode", out JsonElement errorCodeElement))
+            }
+            catch (Exception ex)
+            {
+                LogError("ProcessRoomResponse", ex);
+            }
+        }
+        private static int CountPlayersInRoom(JsonElement dataItems)
+        {
+            int count = 0;
+            try
+            {
+                foreach (JsonProperty _ in dataItems.EnumerateObject())
                 {
-                    if (errorCodeElement.GetInt32() == 1199)
+                    count++;
+                }
+            }
+            catch (Exception)
+            {
+            }
+            return count;
+        }
+        private static async Task CheckForSpecialCosmetics(string value, string roomCode, int playerCount, string region)
+        {
+            for (int i = 0; i < Settings.cosmetics.Length; i++)
+            {
+                if (value.Contains(Settings.cosmetics[i]))
+                {
+                    string title = "";
+                    string thumbnailUrl = "";
+                    string webhookType = "";
+
+                    switch (i)
                     {
-                        nextRunTime = DateTime.UtcNow.AddSeconds(25);
+                        case 0:
+                            title = "Player Found - Finger Painter Badge";
+                            thumbnailUrl = "https://static.wikia.nocookie.net/gorillatag/images/b/b7/Fingerpaint.png/revision/latest/thumbnail/width/360/height/360?cb=20231114024321";
+                            webhookType = "pro";
+                            break;
+                        case 1:
+                            title = "Player Found - Illustrator Badge";
+                            thumbnailUrl = "https://static.wikia.nocookie.net/gorillatag/images/2/22/IllustratorbadgeTransparent.png/revision/latest/thumbnail/width/360/height/360?cb=20240612230801";
+                            webhookType = "pro";
+                            break;
+                        case 2:
+                            title = "Player Found - Administrator Badge";
+                            thumbnailUrl = "https://static.wikia.nocookie.net/gorillatag/images/4/40/Adminbadge.png/revision/latest/thumbnail/width/360/height/360?cb=20220223233745";
+                            webhookType = "pro";
+                            break;
+                        case 3:
+                            title = "Player Found - Moderator Stick";
+                            thumbnailUrl = "https://static.wikia.nocookie.net/gorillatag/images/a/aa/Stick.png/revision/latest?cb=20231102195128";
+                            webhookType = "pro";
+                            break;
+                        case 4:
+                            title = "Player Found - Cold Monke Sweater";
+                            thumbnailUrl = "https://static.wikia.nocookie.net/gorillatag/images/9/9d/SweaterWinter23GTSprite.png/revision/latest/thumbnail/width/360/height/360?cb=20230127222427";
+                            webhookType = "pro";
+                            break;
+                        case 5:
+                            title = "Player Found - 2022 Glasses";
+                            thumbnailUrl = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTysnxY8_8v5HAgUhZOMAz6iz9liIXcFxZR-kpO0VXERLP2I9wcMdomy6SHZ1Ir_b-CMIA&usqp=CAU";
+                            webhookType = "free";
+                            break;
+                        case 6:
+                            title = "Player Found - GT1 Badge";
+                            thumbnailUrl = "https://static.wikia.nocookie.net/gorillatag/images/8/88/Gt1.png/revision/latest/thumbnail/width/360/height/360?cb=20220223233019";
+                            webhookType = "free";
+                            break;
+                    }
+
+                    if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(thumbnailUrl) && !string.IsNullOrEmpty(webhookType))
+                    {
+                        await SendDiscordWebhook(title, roomCode, playerCount, region, thumbnailUrl, webhookType);
+                        totalPlayersFound++;
                     }
                 }
             }
-
-            if (groupType == "prv")
+        }
+        private static async Task SendDiscordWebhook(string title, string roomCode, int playerCount, string region, string thumbnailUrl, string webhookType)
+        {
+            if (title == lastTitle && roomCode == lastRoom)
             {
-                Console.WriteLine(room);
-                CycleRoomCode(ref Settings.index, Settings.roomsPrv.Count);
-            }
-            else
-            {
-                Console.WriteLine(room);
-                CycleRoomCode(ref Settings.index2, Settings.roomsPub.Count);
+                return;
             }
 
-            nextRunTime = DateTime.UtcNow.AddMilliseconds(450);
-            nextRunTime2 = DateTime.UtcNow.AddMilliseconds(450);
-        }
-        private static void CycleRoomCode(ref int index, int roomListCount)
-        {
-            if (index + 1 == roomListCount)
-            {
-                index = 0;
-            }
-            else
-            {
-                index++;
-            }
-            Console.WriteLine($"Cycling to room {index}, Total rooms: {roomListCount}");
-        }
-        private static async Task CheckAndSendWebhook(string value, string room, int playerList, string region)
-        {
-            if (value.Contains(Settings.cosmetics[0]))
-            {
-                await SendDiscordWebhook("Player Found - Finger Painter Badge", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/b/b7/Fingerpaint.png/revision/latest/thumbnail/width/360/height/360?cb=20231114024321", "pro");
-            }
-            if (value.Contains(Settings.cosmetics[1]))
-            {
-                await SendDiscordWebhook("Player Found - Illustrator Badge", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/2/22/IllustratorbadgeTransparent.png/revision/latest/thumbnail/width/360/height/360?cb=20240612230801", "pro");
-            }
-            if (value.Contains(Settings.cosmetics[2]))
-            {
-                await SendDiscordWebhook("Player Found - Administrator Badge", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/4/40/Adminbadge.png/revision/latest/thumbnail/width/360/height/360?cb=20220223233745", "pro");
-            }
-            if (value.Contains(Settings.cosmetics[3]))
-            {
-                await SendDiscordWebhook("Player Found - Moderator Stick", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/a/aa/Stick.png/revision/latest?cb=20231102195128", "pro");
-            }
-            if (value.Contains(Settings.cosmetics[4]))
-            {
-                await SendDiscordWebhook("Player Found - Cold Monke Sweater", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/9/9d/SweaterWinter23GTSprite.png/revision/latest/thumbnail/width/360/height/360?cb=20230127222427", "pro");
-            }
-            if (value.Contains(Settings.cosmetics[5]))
-            {
-                await SendDiscordWebhook("Player Found - 2022 Glasses", room, playerList, region, "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTysnxY8_8v5HAgUhZOMAz6iz9liIXcFxZR-kpO0VXERLP2I9wcMdomy6SHZ1Ir_b-CMIA&usqp=CAU", "free");
-            }
-            if (value.Contains(Settings.cosmetics[6]))
-            {
-                await SendDiscordWebhook("Player Found - GT1 Badge", room, playerList, region, "https://static.wikia.nocookie.net/gorillatag/images/8/88/Gt1.png/revision/latest/thumbnail/width/360/height/360?cb=20220223233019", "free");
-            }
-        }
-        private static void RemoveRoom(string room)
-        {
-            Console.WriteLine($"Removing room: {room}");
-            if (Settings.roomsPrv.Contains(room))
-            {
-                Settings.roomsPrv.Remove(room);
-                removedRooms[room] = DateTime.UtcNow.AddMinutes(2);
-            }
-            if (Settings.roomsPub.Contains(room))
-            {
-                Settings.roomsPub.Remove(room);
-                removedRooms[room] = DateTime.UtcNow.AddMinutes(2);
-            }
-        }
-        private static async Task SendDiscordWebhook(string title, string room, int PlayerList, string region, string thumbnail, string thing)
-        {
-            if (title == lastTitle && room == lastRoom) { return; }
-
-            string webhookUrl = "";
+            string webhookUrl;
             string content = "";
-            if (thing == "free") { webhookUrl = Settings.WebHookFree; }
-            if (thing == "pro") { webhookUrl = Settings.WebHookPro; }
-            if (title == "Player Found - Finger Painter Badge") { content = "||<@&1265507746535575623>||"; }
-            if (title == "Player Found - Illustrator Badge") { content = "||<@&1266147098513113168>||"; }
-            if (title == "Player Found - Administrator Badge") { content = "||<@&1265511219872137321>||"; }
-            if (title == "Player Found - Moderator Stick") { content = "||<@&1265511376605020160>||"; }
+
+            if (webhookType == "free")
+            {
+                webhookUrl = Settings.WebHookFree;
+            }
+            else if (webhookType == "pro")
+            {
+                webhookUrl = Settings.WebHookPro;
+            }
+            else
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(webhookUrl))
+            {
+                Log($"No webhook URL configured for {webhookType}");
+                return;
+            }
+
+            switch (title)
+            {
+                case "Player Found - Finger Painter Badge":
+                    content = "||<@&1265507746535575623>||";
+                    break;
+                case "Player Found - Illustrator Badge":
+                    content = "||<@&1266147098513113168>||";
+                    break;
+                case "Player Found - Administrator Badge":
+                    content = "||<@&1265511219872137321>||";
+                    break;
+                case "Player Found - Moderator Stick":
+                    content = "||<@&1265511376605020160>||";
+                    break;
+            }
+
             string time = DateTime.Now.ToString("h:mm tt") + " Central Time";
             var payload = new
             {
@@ -302,9 +529,9 @@ namespace Fish_Player_Tracker
                     new
                     {
                         title = title,
-                        description = $"Room: **{room}**\nPlayers: **{PlayerList}/10**\nTime: **{time}**\nRegion: **{region}**",
+                        description = $"Room: **{roomCode}**\nPlayers: **{playerCount}/10**\nTime: **{time}**\nRegion: **{region}**",
                         color = 0xFF0000,
-                        thumbnail = new { url = thumbnail }
+                        thumbnail = new { url = thumbnailUrl }
                     }
                 }
             };
@@ -315,29 +542,56 @@ namespace Fish_Player_Tracker
                 Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
             };
 
-            HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
-            if (response.StatusCode != System.Net.HttpStatusCode.NoContent)
+            try
             {
-                string responseContent = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Failed to send webhook: {response.StatusCode}");
-                Console.WriteLine(responseContent);
-            }
+                HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
+                if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    Log($"Webhook sent: {title} in room {roomCode}");
+                    totalWebhooksSent++;
 
-            lastTitle = title;
-            lastRoom = room;
-        }
-        private static async Task LoginWithSteam(string loginRequestJson)
-        {
-            var response = await httpClient.PostAsync($"https://{playFabApiHost}/Client/LoginWithSteam", new StringContent(loginRequestJson, Encoding.UTF8, "application/json"));
-            if (response.IsSuccessStatusCode)
-            {
-                Console.WriteLine("Your login");
+                    lastTitle = title;
+                    lastRoom = roomCode;
+                }
+                else
+                {
+                    string responseContent = await response.Content.ReadAsStringAsync();
+                    LogError("SendWebhook", new Exception($"Failed to send webhook: {response.StatusCode}\n{responseContent}"));
+                }
             }
-            else
+            catch (Exception ex)
             {
-                Console.WriteLine("Something went wrong with your first API call.  :(");
-                string errorContent = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Here's some debug information:\n{errorContent}");
+                LogError("SendWebhook", ex);
+            }
+        }
+        private static void Log(string message)
+        {
+            try
+            {
+                string logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
+                Console.WriteLine(logMessage);
+
+                string logFile = Path.Combine(LOG_PATH, $"log_{DateTime.Now:yyyy-MM-dd}.txt");
+                File.AppendAllText(logFile, logMessage + Environment.NewLine);
+            }
+            catch
+            {
+            }
+        }
+        private static void LogError(string context, Exception ex)
+        {
+            try
+            {
+                string logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ERROR in {context}: {ex.Message}\n{ex.StackTrace}";
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"ERROR in {context}: {ex.Message}");
+                Console.ResetColor();
+
+                string logFile = Path.Combine(LOG_PATH, $"errors_{DateTime.Now:yyyy-MM-dd}.txt");
+                File.AppendAllText(logFile, logMessage + Environment.NewLine);
+            }
+            catch
+            {
             }
         }
     }

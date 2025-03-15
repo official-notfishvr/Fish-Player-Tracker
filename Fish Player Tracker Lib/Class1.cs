@@ -10,197 +10,461 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
 using UnityEngine;
 using Valve.Newtonsoft.Json;
-using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Fish_Player_Tracker_Lib
 {
-    [BepInPlugin("Fish.Tracker.lol", "Tracker", "1.0.0")]
+    [BepInPlugin("Fish.Tracker.lol", "Tracker", "2.0.0")]
     public class Class1 : BaseUnityPlugin
     {
-        public static string Path = @"C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag\Tracker";
-        public static string steamAuthTicketPath = $@"{Path}\SteamAuthTicket.txt";
-        public static string sessionTicketPath = $@"{Path}\sessionTicket.txt";
-        public static string playFabIdPath = $@"{Path}\playFabId.txt";
-        public static string playerEntityPath = $@"{Path}\playerEntity.txt";
-        public static string RoomCodesPrvPath = $@"{Path}\RoomCodesPrv.txt";
-        public static string RoomCodesPubPath = $@"{Path}\RoomCodesPub.txt";
-        public static string UserIdsPath = $@"{Path}\UserIds.txt";
-        public static string IndexPath = $@"{Path}\Index.txt";
-        public static int index = 0;
-        private Dictionary<string, string> userIdDict = new Dictionary<string, string>();
-        private static readonly HttpClient httpClient = new HttpClient();
+        #region Constants and Static Fields
+        private static readonly string BasePath = @"C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag\Tracker";
+        private static readonly string ConfigPath = Path.Combine(BasePath, "config.json");
+        private static readonly string SessionTicketPath = Path.Combine(BasePath, "sessionTicket.txt");
+        private static readonly string PlayFabIdPath = Path.Combine(BasePath, "playFabId.txt");
+        private static readonly string RoomCodesPrvPath = Path.Combine(BasePath, "RoomCodesPrv.txt");
+        private static readonly string RoomCodesPubPath = Path.Combine(BasePath, "RoomCodesPub.txt");
+        private static readonly string UserIdsPath = Path.Combine(BasePath, "UserIds.json");
+        private static readonly string LogPath = Path.Combine(BasePath, "log.txt");
 
-        public Class1()
+        private static readonly HttpClient HttpClient = new HttpClient();
+        private static readonly HashSet<string> ProcessedPlayers = new HashSet<string>();
+        private static float _nextHopTime = 0f;
+        private static bool _isHopping = false;
+        private static float _lastTrackerUpdate = 0f;
+        private static readonly float TrackerUpdateInterval = 10f;
+        private static readonly float RoomHopCooldown = 20f;
+        #endregion
+
+        #region Configuration Classes
+        [Serializable]
+        private class TrackerConfig
         {
+            public string WebhookUrl { get; set; } = Settings.WebHook;
+            public bool EnableRoomHopping { get; set; } = false;
+            public bool LogFoundPlayers { get; set; } = true;
+            public int HopCooldownSeconds { get; set; } = 20;
+            public List<string> TargetCosmeticIds { get; set; } = new List<string>
+            {
+                "LBADE", "LBAGS", "LBAAD", "LBAAK", "LBACP", "LFAAZ", "LBAAZ"
+            };
+            public List<string> PriorityRoomCodes { get; set; } = new List<string>();
         }
 
-        public void Update()
+        [Serializable]
+        private class RoomData
         {
-            //string steamAuthTicket = PlayFabAuthenticator.instance.GetSteamAuthTicket().ToString();
-            //SteamAuthTicket steamAuthTicket = Traverse.Create(PlayFabAuthenticator.instance).Field("steamAuthTicketForPlayFab").GetValue();
-            string sessionTicket = Traverse.Create(PlayFabAuthenticator.instance).Field("_sessionTicket").GetValue()?.ToString();
-            string playFabId = Traverse.Create(PlayFabAuthenticator.instance).Field("_playFabId").GetValue()?.ToString();
-            string playerEntity = Traverse.Create(GorillaNetworking.GorillaServer.Instance).Field("get_playerEntity").GetValue()?.ToString();
+            public List<string> PrivateRooms { get; set; } = new List<string>();
+            public List<string> PublicRooms { get; set; } = new List<string>();
+            public Dictionary<string, DateTime> LastSeen { get; set; } = new Dictionary<string, DateTime>();
+        }
 
+        [Serializable]
+        private class PlayerData
+        {
+            public string PlayerId { get; set; }
+            public string PlayerName { get; set; }
+            public List<string> KnownCosmeticIds { get; set; } = new List<string>();
+            public DateTime LastSeen { get; set; }
+            public string LastRoom { get; set; }
+        }
+        #endregion
+
+        #region Private Fields
+        private TrackerConfig _config = new TrackerConfig();
+        private RoomData _roomData = new RoomData();
+        private Dictionary<string, PlayerData> _playerDataDict = new Dictionary<string, PlayerData>();
+        private DateTime _lastWebhookSent = DateTime.MinValue;
+        #endregion
+
+        private void Awake()
+        {
             try
             {
-                if (!Directory.Exists(Path)) { Directory.CreateDirectory(Path); }
-                //UpdateFileIfChanged(steamAuthTicketPath, steamAuthTicket);
-                UpdateFileIfChanged(sessionTicketPath, sessionTicket);
-                UpdateFileIfChanged(playFabIdPath, playFabId);
-                UpdateFileIfChanged(playerEntityPath, playerEntity);
-                UpdateFileIfChanged(RoomCodesPrvPath, string.Join(", ", roomsPrv));
-                //UpdateFileIfChanged(UserIdsPath, string.Empty);
-
-                LoadIndex();
-                LoadUserIds();
-
-                if (!PhotonNetwork.InRoom)
+                if (!Directory.Exists(BasePath))
                 {
-                    if (Time.time >= Settings.hopCooldown)
+                    Directory.CreateDirectory(BasePath);
+                }
+
+                if (!File.Exists(SessionTicketPath)) { File.WriteAllText(SessionTicketPath, string.Empty); }
+                if (!File.Exists(PlayFabIdPath))     { File.WriteAllText(PlayFabIdPath, string.Empty); }
+                if (!File.Exists(LogPath))           { File.WriteAllText(LogPath, string.Empty); }
+
+                if (!File.Exists(RoomCodesPrvPath))
+                {
+                    PopulateDefaultRoomCodes();
+                    SaveRoomData();
+                }
+
+                HttpClient.Timeout = TimeSpan.FromSeconds(10);
+
+                try
+                {
+                    if (File.Exists(ConfigPath))
                     {
-                        GameObject gameObject;
-                        if (!Settings.hasAddedCity)
-                        {
-                            gameObject = GameObject.Find("JoinPublicRoom - Forest, Tree Exit");
-                            gameObject.GetComponent<GorillaNetworkJoinTrigger>().OnBoxTriggered();
-                            Settings.hasAddedCity = true;
-                        }
-                        else
-                        {
-                            gameObject = GameObject.Find("JoinPublicRoom - City Front");
-                            gameObject.GetComponent<GorillaNetworkJoinTrigger>().OnBoxTriggered();
-                            Settings.hasAddedCity = false;
-                        }
-                        Player.Instance.headCollider.gameObject.transform.position = gameObject.gameObject.transform.position;
-                        Player.Instance.bodyCollider.gameObject.transform.position = gameObject.gameObject.transform.position;
-                        foreach (MeshCollider meshCollider in UnityEngine.Object.FindObjectsOfType<MeshCollider>())
-                        {
-                            if (meshCollider.gameObject.activeSelf) { meshCollider.enabled = false; }
-                        }
-                        PhotonNetworkController.Instance.AttemptToJoinPublicRoom(gameObject.GetComponent<GorillaNetworkJoinTrigger>(), JoinType.Solo);
-                        Settings.hopCooldown = Time.time + 20f;
+                        string json = File.ReadAllText(ConfigPath);
+                        _config = JsonConvert.DeserializeObject<TrackerConfig>(json);
                     }
                     else
                     {
-                        foreach (MeshCollider meshCollider2 in UnityEngine.Object.FindObjectsOfType<MeshCollider>())
-                        {
-                            if (meshCollider2.gameObject.activeSelf) { meshCollider2.enabled = true; }
-                        }
-                        Player.Instance.GetComponent<Rigidbody>().velocity = Vector3.zero;
+                        SaveConfiguration();
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    foreach (Photon.Realtime.Player player in PhotonNetwork.PlayerList)
+                    LogError($"Failed to load configuration: {ex.Message}");
+                    _config = new TrackerConfig();
+                    SaveConfiguration();
+                }
+
+                UpdateFileIfChanged(RoomCodesPrvPath, string.Join(", ", roomsPrv));
+
+                _roomData.PrivateRooms = roomsPrv;
+                // Load player data
+                try
+                {
+                    if (File.Exists(UserIdsPath))
                     {
-                        string userId = player.UserId;
-                        if (userIdDict.ContainsKey(userId))
-                        {
-                            Debug.Log($"User ID {userId} found with name {userIdDict[userId]}.");
-                            Task.Run(() => SendDiscordWebhook(userIdDict[userId], userId, player));
-                        }
-                        else { }
+                        string json = File.ReadAllText(UserIdsPath);
+                        _playerDataDict = JsonConvert.DeserializeObject<Dictionary<string, PlayerData>>(json);
                     }
-                    if (!roomsPub.Contains(PhotonNetwork.CurrentRoom.Name)) { roomsPub.Add(PhotonNetwork.CurrentRoom.Name); }
-                    PhotonNetwork.Disconnect();
-                    string formattedRoomsPub = string.Join(", ", roomsPub.Select(code => $"\"{code}\""));
-                    File.WriteAllText(RoomCodesPubPath, formattedRoomsPub);
+                }
+                catch (Exception ex)
+                {
+                    LogError($"Failed to load player data: {ex.Message}");
+                    _playerDataDict = new Dictionary<string, PlayerData>();
+                }
+
+                SaveData();
+                InvokeRepeating("SaveData", 60f, 60f);
+
+                Log("Tracker initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to initialize tracker: {ex.Message}");
+            }
+        }
+        private void Update()
+        {
+            try
+            {
+                if (Time.time > _lastTrackerUpdate + TrackerUpdateInterval)
+                {
+                    try
+                    {
+                        string sessionTicket = Traverse.Create(PlayFabAuthenticator.instance).Field("_sessionTicket").GetValue()?.ToString();
+                        string playFabId = Traverse.Create(PlayFabAuthenticator.instance).Field("_playFabId").GetValue()?.ToString();
+
+                        UpdateFileIfChanged(SessionTicketPath, sessionTicket);
+                        UpdateFileIfChanged(PlayFabIdPath, playFabId);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogError($"Failed to update session data: {ex.Message}");
+                    }
+                    _lastTrackerUpdate = Time.time;
+                }
+
+                if (_config.EnableRoomHopping)
+                {
+                   // HandleRoomHopping();
+                }
+
+                if (PhotonNetwork.InRoom)
+                {
+                    ScanPlayersInRoom();
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Failed to write to files: {ex.Message}");
+                LogError($"Error in Update: {ex.Message}");
             }
         }
-        private void LoadIndex()
+        private void PopulateDefaultRoomCodes()
         {
-            if (File.Exists(IndexPath))
-            {
-                string indexContent = File.ReadAllText(IndexPath);
-                if (int.TryParse(indexContent, out int loadedIndex))
-                {
-                    index = loadedIndex;
-                }
-                else
-                {
-                    Debug.LogError($"Invalid index value in {IndexPath}");
-                }
-            }
+            //_roomData.PrivateRooms = new List<string>
+            //{
+            //};
         }
-        private void LoadUserIds()
+        private void ScanPlayersInRoom()
         {
-            if (File.Exists(UserIdsPath))
+            if (!PhotonNetwork.InRoom) { return; }
+
+            try
             {
-                string[] lines = File.ReadAllLines(UserIdsPath);
-                foreach (var line in lines)
+                string currentRoom = PhotonNetwork.CurrentRoom.Name;
+
+                if (!_roomData.PublicRooms.Contains(currentRoom))
                 {
-                    var parts = line.Split(';');
-                    if (parts.Length == 2)
+                    _roomData.PublicRooms.Add(currentRoom);
+                }
+
+                _roomData.LastSeen[currentRoom] = DateTime.Now;
+
+                foreach (Photon.Realtime.Player player in PhotonNetwork.PlayerList)
+                {
+                    string userId = player.UserId;
+
+                    if (ProcessedPlayers.Contains(userId)) { continue; }
+                    if (_playerDataDict.TryGetValue(userId, out PlayerData playerData))
                     {
-                        userIdDict[parts[0]] = parts[1];
-                        Debug.Log("userIdDict" + userIdDict);
-                        Debug.Log("parts 0:" + parts[0]);
-                        Debug.Log("parts 1:" + parts[1]);
+                        playerData.PlayerName = player.NickName;
+                        playerData.LastSeen = DateTime.Now;
+                        playerData.LastRoom = currentRoom;
+
+                        if ((DateTime.Now - _lastWebhookSent).TotalSeconds > 5)
+                        {
+                            Task.Run(() => SendPlayerFoundWebhook(playerData, currentRoom));
+                            _lastWebhookSent = DateTime.Now;
+                        }
+
+                        Log($"Found tracked player: {playerData.PlayerName} ({userId}) in room {currentRoom}");
+                    }
+                    ProcessedPlayers.Add(userId);
+                }
+
+                if (_config.EnableRoomHopping)
+                {
+                    PhotonNetwork.Disconnect();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error scanning players: {ex.Message}");
+            }
+        }
+        private async Task SendPlayerFoundWebhook(PlayerData playerData, string room)
+        {
+            if (string.IsNullOrEmpty(_config.WebhookUrl)) { return; }
+
+            try
+            {
+                string time = DateTime.Now.ToString("h:mm tt") + " Local Time";
+
+                var payload = new
+                {
+                    embeds = new[]
+                    {
+                        new
+                        {
+                            title = $"Player Found: {playerData.PlayerName}",
+                            description = $"Player ID: **{playerData.PlayerId}**\nRoom: **{room}**\nTime: **{time}**",
+                            color = 0xFF0000
+                        }
+                    }
+                };
+
+                string payloadJson = JsonConvert.SerializeObject(payload);
+                var requestMessage = new HttpRequestMessage(HttpMethod.Post, _config.WebhookUrl)
+                {
+                    Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
+                };
+
+                HttpResponseMessage response = await HttpClient.SendAsync(requestMessage);
+                if (response.StatusCode != System.Net.HttpStatusCode.NoContent)
+                {
+                    string responseContent = await response.Content.ReadAsStringAsync();
+                    LogError($"Failed to send webhook: {response.StatusCode}\n{responseContent}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error sending webhook: {ex.Message}");
+            }
+        }
+        #region Data Management
+        private void SaveConfiguration()
+        {
+            try
+            {
+                string json = JsonConvert.SerializeObject(_config, Formatting.Indented);
+                File.WriteAllText(ConfigPath, json);
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to save configuration: {ex.Message}");
+            }
+        }
+        private void SaveRoomData()
+        {
+            try
+            {
+               // string json = JsonConvert.SerializeObject(_roomData, Formatting.Indented);
+                //File.WriteAllText(RoomCodesPubPath, json);
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to save room data: {ex.Message}");
+            }
+        }
+        private void SaveData()
+        {
+            SaveConfiguration();
+            SaveRoomData();
+            try
+            {
+                string json = JsonConvert.SerializeObject(_playerDataDict, Formatting.Indented);
+                File.WriteAllText(UserIdsPath, json);
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to save player data: {ex.Message}");
+            }
+        }
+        #endregion
+        #region Room Hopping
+        private void HandleRoomHopping()
+        {
+            if (_isHopping) { return; }
+
+            if (!PhotonNetwork.InRoom && Time.time >= _nextHopTime)
+            {
+                _isHopping = true;
+
+                try
+                {
+                    string roomCode = GetNextRoomToCheck();
+                    GameObject joinTrigger = FindJoinTrigger(_isHopping);
+
+                    if (joinTrigger != null)
+                    {
+                        if (Player.Instance != null && joinTrigger != null)
+                        {
+                            Player.Instance.headCollider.gameObject.transform.position = joinTrigger.transform.position;
+                            Player.Instance.bodyCollider.gameObject.transform.position = joinTrigger.transform.position;
+
+                            if (Player.Instance.TryGetComponent<Rigidbody>(out var rb))
+                            {
+                                rb.velocity = Vector3.zero;
+                            }
+                        }
+                        ToggleMeshColliders(false);
+
+                        if (joinTrigger.TryGetComponent<GorillaNetworkJoinTrigger>(out var trigger))
+                        {
+                            trigger.OnBoxTriggered();
+                            PhotonNetworkController.Instance.AttemptToJoinPublicRoom(trigger, JoinType.Solo);
+                            Log($"Attempting to join room via trigger {joinTrigger.name}");
+                        }
+
+                        _nextHopTime = Time.time + RoomHopCooldown;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogError($"Error during room hopping: {ex.Message}");
+                }
+
+                _isHopping = false;
+            }
+            else if (PhotonNetwork.InRoom)
+            {
+                ToggleMeshColliders(true);
+            }
+        }
+        private string GetNextRoomToCheck()
+        {
+            if (_config.PriorityRoomCodes.Count > 0)
+            {
+                return _config.PriorityRoomCodes[UnityEngine.Random.Range(0, _config.PriorityRoomCodes.Count)];
+            }
+
+            if (_roomData.PrivateRooms.Count > 0)
+            {
+                return _roomData.PrivateRooms[UnityEngine.Random.Range(0, _roomData.PrivateRooms.Count)];
+            }
+
+            return "MODS";
+        }
+        private GameObject FindJoinTrigger(bool useCity)
+        {
+            GameObject trigger = null;
+
+            if (useCity)
+            {
+                trigger = GameObject.Find("JoinPublicRoom - City Front");
+            }
+
+            if (trigger == null)
+            {
+                trigger = GameObject.Find("JoinPublicRoom - Forest, Tree Exit");
+            }
+
+            return trigger;
+        }
+        private void ToggleMeshColliders(bool enabled)
+        {
+            try
+            {
+                foreach (MeshCollider meshCollider in UnityEngine.Object.FindObjectsOfType<MeshCollider>())
+                {
+                    if (meshCollider != null && meshCollider.gameObject.activeSelf)
+                    {
+                        meshCollider.enabled = enabled;
                     }
                 }
             }
-            else
+            catch (Exception ex)
             {
-                Debug.LogWarning($"User IDs file not found at {UserIdsPath}");
+                LogError($"Error toggling mesh colliders: {ex.Message}");
+            }
+        }
+        #endregion
+        #region Logging
+        private void Log(string message)
+        {
+            try
+            {
+                if (_config.LogFoundPlayers)
+                {
+                    Debug.Log($"[Tracker] {message}");
+                    File.AppendAllText(LogPath, $"[{DateTime.Now}] {message}\n");
+                }
+            }
+            catch
+            {
+            }
+        }
+        private void LogError(string message)
+        {
+            try
+            {
+                Debug.LogError($"[Tracker] {message}");
+                File.AppendAllText(LogPath, $"[{DateTime.Now}] ERROR: {message}\n");
+            }
+            catch
+            {
             }
         }
         private void UpdateFileIfChanged(string filePath, string newContent)
         {
-            if (File.Exists(filePath))
+            if (string.IsNullOrEmpty(newContent)) { return; }
+
+            try
             {
-                string existingContent = File.ReadAllText(filePath);
-                if (existingContent != newContent)
+                if (File.Exists(filePath))
+                {
+                    string existingContent = File.ReadAllText(filePath);
+                    if (existingContent != newContent)
+                    {
+                        File.WriteAllText(filePath, newContent);
+                    }
+                }
+                else
                 {
                     File.WriteAllText(filePath, newContent);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                File.WriteAllText(filePath, newContent);
+                LogError($"Failed to update file {filePath}: {ex.Message}");
             }
         }
-        private static async Task SendDiscordWebhook(string UserName, string UserID, Photon.Realtime.Player player)
-        {
-            string webhookUrl = "";
-            webhookUrl = Settings.WebHook;
-            string time = DateTime.Now.ToString("h:mm tt") + " Central Time";
-            var payload = new
-            {
-                // = content,
-                embeds = new[]
-                {
-                    new
-                    {
-                        title = "Player Found " + UserName,
-                        description = $"Player Name: **{player.NickName}**\nPlayer ID: **{player.UserId}**\nTime: **{time}**",
-                        color = 0xFF0000,
-                    }
-                }
-            };
-            string payloadJson = JsonSerializer.Serialize(payload);
-            var requestMessage = new HttpRequestMessage(HttpMethod.Post, webhookUrl)
-            {
-                Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
-            };
+        #endregion
 
-            HttpResponseMessage response = await httpClient.SendAsync(requestMessage);
-            if (response.StatusCode != System.Net.HttpStatusCode.NoContent)
-            {
-                string responseContent = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Failed to send webhook: {response.StatusCode}");
-                Console.WriteLine(responseContent);
-            }
-        }
         public static List<string> roomsPrv = new List<string>
         {
             // prv codes
@@ -232,10 +496,6 @@ namespace Fish_Player_Tracker_Lib
             "CONTENTCREATOR", "CONTENT", "HELPME", "BEES", "NAMO", "WARNING", "HIDE", "WOW", "MITTENS", "RAY2", "RAY1",
             "GRAPES", "MICROPHONE", "BARK", "DURF", "JULIAN", "HAVEN", "VR", "WEAREVR", "FINGER",
             "PAINTER", "ADMIN", "STAFF", "CRASH", "YOUTUBE", "MODDING", "LEMMING"
-        };
-        public static List<string> roomsPub = new List<string>
-        {
-            // Pub codes
         };
     }
 }

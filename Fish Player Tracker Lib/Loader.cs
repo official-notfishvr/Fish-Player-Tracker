@@ -12,17 +12,17 @@ namespace Fish_Player_Tracker_Lib
     {
         public void Init()
         {
-            if (!GameObject.Find("Loader") && GorillaLocomotion.Player.hasInstance)
+            if (!GameObject.Find("Loader332") && GorillaLocomotion.Player.hasInstance)
             {
-                GameObject Loader = new GameObject("Loader");
+                GameObject Loader = new GameObject("Loader332");
                 Loader.AddComponent<Class1>();
             }
         }
         public void FixedUpdate()
         {
-            if (!GameObject.Find("Loader"))
+            if (!GameObject.Find("Loader331"))
             {
-                GameObject Loader = new GameObject("Loader");
+                GameObject Loader = new GameObject("Loader331");
                 Loader.AddComponent<Class1>();
             }
         }
