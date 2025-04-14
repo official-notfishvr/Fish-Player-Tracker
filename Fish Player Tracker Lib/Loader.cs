@@ -12,7 +12,7 @@ namespace Fish_Player_Tracker_Lib
     {
         public void Init()
         {
-            if (!GameObject.Find("Loader332") && GorillaLocomotion.Player.hasInstance)
+            if (!GameObject.Find("Loader332") && GorillaLocomotion.GTPlayer.hasInstance)
             {
                 GameObject Loader = new GameObject("Loader332");
                 Loader.AddComponent<Class1>();

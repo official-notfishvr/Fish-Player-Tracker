@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,17 +8,19 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Timers;
+using System.Collections;
+using System.Text.RegularExpressions;
 
 namespace Fish_Player_Tracker
 {
     internal class Program
     {
-        private static readonly HttpClient httpClient = new HttpClient();
+        public static readonly HttpClient httpClient = new HttpClient();
         private static readonly Random random = new Random();
 
         // Constants
         private const string PLAYFAB_TITLE_ID = "63FDD";
-        private static readonly string PLAYFAB_API_HOST = $"{PLAYFAB_TITLE_ID}.playfabapi.com";
+        public static readonly string PLAYFAB_API_HOST = $"{PLAYFAB_TITLE_ID}.playfabapi.com";
 
         // Paths
         private static readonly string BASE_PATH = @"\\?\C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag\Tracker";
@@ -28,8 +31,8 @@ namespace Fish_Player_Tracker
         private static readonly string LOG_PATH = Path.Combine(BASE_PATH, "Logs");
 
         // State variables
-        private static string playFabId = string.Empty;
-        private static string sessionTicket = string.Empty;
+        public static string playFabId = string.Empty;
+        public static string sessionTicket = string.Empty;
         private static Timer scanPrvRoomsTimer;
         private static Timer scanPubRoomsTimer;
         private static Timer roomCodesRefreshTimer;
@@ -43,7 +46,10 @@ namespace Fish_Player_Tracker
         private static int totalRoomsScanned = 0;
         private static int totalPlayersFound = 0;
         private static int totalWebhooksSent = 0;
+        public static int totalCosmeticRequestsSent = 0;
         private static DateTime startTime;
+
+        public static int totalRequestsSent = 0;
 
         static async Task Main(string[] args)
         {
@@ -96,10 +102,34 @@ namespace Fish_Player_Tracker
                 roomCodesRefreshTimer = new Timer(300000);
                 roomCodesRefreshTimer.Elapsed += (s, e) => LoadRoomCodes();
                 roomCodesRefreshTimer.Start();
+                //await Program2.CheckCosmeticsForItem("LHAAC.");
 
+                /*
+                string targetPlayerId = "705F8FE3C09BDC77"; // A39B4F11EE490C34 // 35F9FF99509565B // 
+
+                string itemId = "LHAAC.";  // The PlayFab item ID
+                int cost = 1;                   // The price in virtual currency
+                string currencyName = "SR";       // The virtual currency code
+
+                await Program2.TryPurchaseItem(itemId, success => {
+                    if (success)
+                    {
+                        Log("Purchase successful! Item added to inventory.");
+                        // Update UI or notify the user
+                    }
+                    else
+                    {
+                        Log("Purchase failed. Please try again or check your balance.");
+                        // Show error message to user
+                    }
+                });
+
+                await Program2.GetPlayerRoomInfo(targetPlayerId);
+                await Program2.QueryPlayerSharedData(targetPlayerId);
+                */
                 Console.WriteLine("Timers initialized");
 
-                DisplayMenu();
+                //DisplayMenu();
                 await Task.Delay(-1);
             }
             catch (Exception ex)
@@ -154,6 +184,7 @@ namespace Fish_Player_Tracker
                     Console.WriteLine($"Total rooms scanned: {totalRoomsScanned}");
                     Console.WriteLine($"Total players found: {totalPlayersFound}");
                     Console.WriteLine($"Total webhooks sent: {totalWebhooksSent}");
+                    Console.WriteLine($"Total cosmetics requests: {totalCosmeticRequestsSent}");
                     Console.WriteLine($"Private rooms: {Settings.roomsPrv.Count} | Current index: {Settings.index}");
                     Console.WriteLine($"Public rooms: {Settings.roomsPub.Count} | Current index: {Settings.index2}");
                     Console.WriteLine();
@@ -163,7 +194,7 @@ namespace Fish_Player_Tracker
                     Console.ResetColor();
 
                     Console.WriteLine();
-                    Console.WriteLine("Press 'R' to reload room codes, 'L' to view logs, 'Q' to quit");
+                    Console.WriteLine("Press 'R' to reload room codes, 'L' to view logs, 'C' to check cosmetics, 'Q' to quit");
 
                     if (Console.KeyAvailable)
                     {
@@ -177,6 +208,10 @@ namespace Fish_Player_Tracker
                         else if (key == ConsoleKey.L)
                         {
                             ViewLogs();
+                            await Task.Delay(1000);
+                        }
+                        else if (key == ConsoleKey.C)
+                        {
                             await Task.Delay(1000);
                         }
                         else if (key == ConsoleKey.Q)
@@ -564,7 +599,7 @@ namespace Fish_Player_Tracker
                 LogError("SendWebhook", ex);
             }
         }
-        private static void Log(string message)
+        public static void Log(string message)
         {
             try
             {
@@ -578,7 +613,7 @@ namespace Fish_Player_Tracker
             {
             }
         }
-        private static void LogError(string context, Exception ex)
+        public static void LogError(string context, Exception ex)
         {
             try
             {

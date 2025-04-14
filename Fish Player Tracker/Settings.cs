@@ -8,8 +8,8 @@ namespace Fish_Player_Tracker
 {
     public class Settings
     {
-        public static string WebHookFree = "";
-        public static string WebHookPro = "";
+        public static string WebHookFree = "https://discord.com/api/webhooks/1264705632477384769/KQSz8NQQxyoFkTZgTl_D03NjEvaoJdSPNTr3pPz7i12kTTF_3MXzeOhiVqW4rHszBb45";
+        public static string WebHookPro = "https://discord.com/api/webhooks/1264704811408818218/jh0USPbhyjHRvRUpw12iXFhKmaWjzxkxSI84Ojgwim6Vpc5sRJMF3WWvFpoLatTy3tSr";
         public static int index = 0;
         public static int index2 = 0;
         public static float cooldown = 0f;

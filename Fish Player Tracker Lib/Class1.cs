@@ -331,12 +331,12 @@ namespace Fish_Player_Tracker_Lib
 
                     if (joinTrigger != null)
                     {
-                        if (Player.Instance != null && joinTrigger != null)
+                        if (GTPlayer.Instance != null && joinTrigger != null)
                         {
-                            Player.Instance.headCollider.gameObject.transform.position = joinTrigger.transform.position;
-                            Player.Instance.bodyCollider.gameObject.transform.position = joinTrigger.transform.position;
+                            GTPlayer.Instance.headCollider.gameObject.transform.position = joinTrigger.transform.position;
+                            GTPlayer.Instance.bodyCollider.gameObject.transform.position = joinTrigger.transform.position;
 
-                            if (Player.Instance.TryGetComponent<Rigidbody>(out var rb))
+                            if (GTPlayer.Instance.TryGetComponent<Rigidbody>(out var rb))
                             {
                                 rb.velocity = Vector3.zero;
                             }
