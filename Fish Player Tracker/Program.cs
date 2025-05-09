@@ -102,31 +102,7 @@ namespace Fish_Player_Tracker
                 roomCodesRefreshTimer = new Timer(300000);
                 roomCodesRefreshTimer.Elapsed += (s, e) => LoadRoomCodes();
                 roomCodesRefreshTimer.Start();
-                //await Program2.CheckCosmeticsForItem("LHAAC.");
 
-                /*
-                string targetPlayerId = "705F8FE3C09BDC77"; // A39B4F11EE490C34 // 35F9FF99509565B // 
-
-                string itemId = "LHAAC.";  // The PlayFab item ID
-                int cost = 1;                   // The price in virtual currency
-                string currencyName = "SR";       // The virtual currency code
-
-                await Program2.TryPurchaseItem(itemId, success => {
-                    if (success)
-                    {
-                        Log("Purchase successful! Item added to inventory.");
-                        // Update UI or notify the user
-                    }
-                    else
-                    {
-                        Log("Purchase failed. Please try again or check your balance.");
-                        // Show error message to user
-                    }
-                });
-
-                await Program2.GetPlayerRoomInfo(targetPlayerId);
-                await Program2.QueryPlayerSharedData(targetPlayerId);
-                */
                 Console.WriteLine("Timers initialized");
 
                 //DisplayMenu();
